@@ -1,0 +1,102 @@
+{
+    "name": "azure_sqldb_cpy_bronze",
+    "properties": {
+        "activities": [
+            {
+                "name": "loop",
+                "type": "ForEach",
+                "dependsOn": [],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@variables('tableName')",
+                        "type": "Expression"
+                    },
+                    "activities": [
+                        {
+                            "name": "cpytobronze",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "AzureSqlSource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('SELECT * FROM [dbo].[',item(),']')",
+                                        "type": "Expression"
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "sink": {
+                                    "type": "DelimitedTextSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSWriteSettings"
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextWriteSettings",
+                                        "quoteAllText": true,
+                                        "fileExtension": ".txt"
+                                    }
+                                },
+                                "enableStaging": false,
+                                "translator": {
+                                    "type": "TabularTranslator",
+                                    "typeConversion": true,
+                                    "typeConversionSettings": {
+                                        "allowDataTruncation": true,
+                                        "treatBooleanAsNumber": false
+                                    }
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "azure_sqlsr_ds",
+                                    "type": "DatasetReference"
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "azure_adls_sinkds",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "folderName": {
+                                            "value": "@item()",
+                                            "type": "Expression"
+                                        },
+                                        "fileName": {
+                                            "value": "@concat(item(),'.csv')",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ],
+        "variables": {
+            "tableName": {
+                "type": "Array",
+                "defaultValue": [
+                    "Product",
+                    "Region",
+                    "Reseller",
+                    "Sales",
+                    "Salesperson",
+                    "SalespersonRegion",
+                    "Targets"
+                ]
+            }
+        },
+        "annotations": []
+    }
+}
