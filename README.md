@@ -126,7 +126,7 @@ sql/
 
 ## Author
 
-**Monty Sharath Chandra**  
+**Sharath Chandra**  
 Data Engineer | Azure | PySpark | SQL | Databricks | ETL | Data Lakehouse  
 
 ---
