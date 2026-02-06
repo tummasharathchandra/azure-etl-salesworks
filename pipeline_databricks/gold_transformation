@@ -1,0 +1,120 @@
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+from pyspark.sql import Row
+
+# Use Unity Catalog
+spark.sql("USE CATALOG <name>")
+spark.sql("USE SCHEMA gold_schema")
+
+# --------------------
+# Read Silver tables
+# --------------------
+df_product_gold = spark.table("<catalog name>.silver_schema.product_silver")
+df_region_gold = spark.table("<catalog name>.silver_schema.region_silver")
+df_reseller_gold = spark.table("<catalog name>.silver_schema.reseller_silver")
+df_sales_gold = spark.table("<catalog name>.silver_schema.sales_silver")
+df_salesperson_gold = spark.table("<catalog name>.silver_schema.salesperson_silver")
+df_salespersonregion_gold = spark.table("<catalog name>.silver_schema.salespersonregion_silver")
+df_targets_gold = spark.table("<catalog name>.silver_schema.targets_silver")
+
+# --------------------
+# Business Transformations
+# --------------------
+
+# Product: split product name into Brand and Additional_info
+df_product_gold = df_product_gold.withColumn(
+    "Brand", trim(split(col("Product"), ",").getItem(0))
+).withColumn(
+    "Additional_info", trim(split(col("Product"), ",").getItem(1))
+).dropna()
+
+# Region: standardize text to upper case
+df_region_gold = df_region_gold.withColumn("Region", upper(col("Region"))) \
+                               .withColumn("Country", upper(col("Country"))) \
+                               .withColumn("Group", upper(col("Group"))) \
+                               .dropna()
+
+# Reseller: build full address
+df_reseller_gold = df_reseller_gold.withColumn(
+    "FullAddress",
+    concat_ws(", ", col("City"), col("Province"), col("Country"))
+)
+
+# Sales: calculate Profit/Loss
+df_sales_gold = df_sales_gold.withColumn(
+    "Profit_Loss",
+    round(col("Sales") - col("Cost"), 1)
+)
+
+# Salesperson: extract email domain from UPN
+df_salesperson_gold = df_salesperson_gold.withColumn(
+    "Email_domain",
+    split(col("UPN"), "@").getItem(1)
+)
+
+# --------------------
+# Write to Gold (Unity Catalog)
+# --------------------
+
+def write_to_gold_catalog(df, name):
+    df.write.format("delta") \
+      .mode("overwrite") \
+      .option("overwriteSchema", "true") \
+      .saveAsTable(f"salesworks.gold_schema.{name}")
+
+write_to_gold_catalog(df_product_gold, "product_gold")
+write_to_gold_catalog(df_region_gold, "region_gold")
+write_to_gold_catalog(df_reseller_gold, "reseller_gold")
+write_to_gold_catalog(df_sales_gold, "sales_gold")
+write_to_gold_catalog(df_salesperson_gold, "salesperson_gold")
+write_to_gold_catalog(df_salespersonregion_gold, "salespersonregion_gold")
+write_to_gold_catalog(df_targets_gold, "targets_gold")
+
+# --------------------
+# Also write to ADLS Gen2 (Gold container)
+# --------------------
+
+gold_path = "abfss://gold@<your_storage_account>.dfs.core.windows.net"
+
+df_product_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/product_gold")
+df_region_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/region_gold")
+df_reseller_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/reseller_gold")
+df_sales_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/sales_gold")
+df_salesperson_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/salesperson_gold")
+df_salespersonregion_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/salespersonregion_gold")
+df_targets_gold.write.format("delta").mode("overwrite").save(f"{gold_path}/targets_gold")
+
+# --------------------
+# Metadata capture (Schema + Row Counts)
+# --------------------
+
+metastore_path = "abfss://metastoredata@<your_storage_account>.dfs.core.windows.net/"
+
+gold_tables = [
+    "salesworks.gold_schema.product_gold",
+    "salesworks.gold_schema.region_gold",
+    "salesworks.gold_schema.reseller_gold",
+    "salesworks.gold_schema.sales_gold",
+    "salesworks.gold_schema.salesperson_gold",
+    "salesworks.gold_schema.salespersonregion_gold",
+    "salesworks.gold_schema.targets_gold"
+]
+
+for table in gold_tables:
+    df = spark.table(table)
+    table_name = table.split(".")[-1]
+
+    # 1. Save schema info
+    schema_data = [(f.name, str(f.dataType)) for f in df.schema.fields]
+    schema_df = spark.createDataFrame(schema_data, ["Column", "Type"])
+    schema_df.write.format("delta").mode("overwrite").save(metastore_path + f"{table_name}_schema")
+
+    # 2. Save row count info
+    row_count = df.count()
+    count_df = spark.createDataFrame([Row(Table=table_name, RowCount=row_count)])
+    count_df.write.format("delta").mode("overwrite").save(metastore_path + f"{table_name}_count")
+
+# --------------------
+# Quick validation
+# --------------------
+spark.sql("DESCRIBE EXTENDED salesworks.gold_schema.product_gold").show(truncate=False)
